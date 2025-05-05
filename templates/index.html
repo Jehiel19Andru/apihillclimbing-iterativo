@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optimización de Rutas con Hill Climbing</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(120deg, #0d1b2a, #1b263b);
+            color: #e2e8f0;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
+            padding: 20px;
+        }
+        select, input, button {
+            margin: 10px;
+            padding: 12px;
+            font-size: 16px;
+            border-radius: 8px;
+            border: none;
+        }
+        button {
+            background: #ff7f50;
+            color: white;
+            cursor: pointer;
+            transition: 0.3s ease-in-out;
+            font-weight: bold;
+        }
+        button:hover {
+            background: #ff6347;
+            transform: scale(1.05);
+        }
+        #map {
+            width: 100%;
+            height: 500px;
+            border-radius: 10px;
+            box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
+            margin-top: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+        .form-group input {
+            flex: 1;
+            padding: 10px;
+        }
+        .city-details {
+            background: #1b263b;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.5);
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Optimización de Rutas con Hill Climbing</h1>
+
+        <button id="btn-generate">Generar Mejor Ruta</button>
+        <button id="btn-clear">Limpiar Campos</button>
+
+        <h2>Selecciona una Ciudad</h2>
+        <select id="city-list" onchange="loadCityData()"></select>
+
+        <div class="city-details">
+            <h3>Detalles de la Ciudad</h3>
+            <div class="form-group">
+                <input type="text" id="new-city-name" placeholder="Nombre">
+                <input type="number" step="any" id="new-city-lat" placeholder="Latitud">
+                <input type="number" step="any" id="new-city-lon" placeholder="Longitud">
+            </div>
+        </div>
+
+        <button id="btn-add-city">Agregar</button>
+        <button id="btn-edit-city">Editar</button>
+        <button id="btn-delete-city">Eliminar</button>
+
+        <h3>Ruta Optimizada</h3>
+        <p id="optimized-route"></p>
+        <p id="total-distance"></p>
+
+        <div id="map"></div>
+    </div>
+
+    <script>
+        const map = L.map('map').setView([19.432713, -99.133183], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+        let markers = [];
+        let cities = [];
+
+        async function fetchCities() {
+            try {
+                const response = await fetch('/cities');
+                const data = await response.json();
+                cities = data.cities;
+                updateCityList();
+            } catch (error) {
+                Swal.fire("Error", "No se pudieron obtener las ciudades.", "error");
+            }
+        }
+
+        function updateCityList() {
+            const cityList = document.getElementById("city-list");
+            cityList.innerHTML = "";
+            cities.forEach(city => {
+                let option = new Option(city, city);
+                cityList.add(option);
+            });
+        }
+
+        async function loadCityData() {
+            const selectedCity = document.getElementById("city-list").value;
+            if (!selectedCity) return;
+
+            try {
+                const response = await fetch(`/get_city_data/${selectedCity}`);
+                const data = await response.json();
+                document.getElementById("new-city-name").value = selectedCity;
+                document.getElementById("new-city-lat").value = data.lat;
+                document.getElementById("new-city-lon").value = data.lon;
+            } catch (error) {
+                Swal.fire("Error", "No se pudieron cargar los datos de la ciudad.", "error");
+            }
+        }
+
+        async function handleCity(action) {
+            const name = document.getElementById("new-city-name").value;
+            const lat = document.getElementById("new-city-lat").value;
+            const lon = document.getElementById("new-city-lon").value;
+
+            if (!name || !lat || !lon) {
+                Swal.fire("Error", "Todos los campos son obligatorios.", "error");
+                return;
+            }
+
+            const endpointMap = {
+                add: '/add_city',
+                edit: '/edit_city',
+                delete: '/delete_city'
+            };
+
+            const methodMap = {
+                add: 'POST',
+                edit: 'POST',
+                delete: 'DELETE'
+            };
+
+            const body = action === 'delete' ? { name } : { name, lat, lon };
+
+            try {
+                const response = await fetch(endpointMap[action], {
+                    method: methodMap[action],
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    Swal.fire("Éxito", data.message, "success");
+                    fetchCities();
+                } else {
+                    Swal.fire("Error", data.error, "error");
+                }
+            } catch (error) {
+                Swal.fire("Error", "No se pudo realizar la operación.", "error");
+            }
+        }
+
+        async function generateRoute() {
+            try {
+                const response = await fetch('/generate_route', { method: 'POST' });
+                const data = await response.json();
+
+                if (response.ok) {
+                    document.getElementById("optimized-route").textContent = data.ruta.join(" ➔ ");
+                    document.getElementById("total-distance").textContent = `Distancia total: ${data.distancia} km`;
+                    renderMap(data.ruta, data.coordenadas);
+                } else {
+                    Swal.fire("Error", data.error, "error");
+                }
+            } catch (error) {
+                Swal.fire("Error", "Hubo un problema al generar la ruta.", "error");
+            }
+        }
+
+        function renderMap(route, coordinates) {
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+
+            if (!route.length) return;
+
+            const latlngs = route.map(city => {
+                const coords = coordinates[city];
+                const marker = L.marker(coords).addTo(map).bindPopup(`<strong>${city}</strong>`);
+                markers.push(marker);
+                return coords;
+            });
+
+            if (latlngs.length > 1) {
+                const polyline = L.polyline(latlngs, { color: 'red', weight: 4 }).addTo(map);
+                markers.push(polyline);
+            }
+        }
+
+        function clearFields() {
+            document.getElementById("new-city-name").value = "";
+            document.getElementById("new-city-lat").value = "";
+            document.getElementById("new-city-lon").value = "";
+            document.getElementById("city-list").selectedIndex = -1; // Deselecciona el dropdown
+        }
+
+        document.getElementById("btn-generate").addEventListener("click", generateRoute);
+        document.getElementById("btn-add-city").addEventListener("click", () => handleCity('add'));
+        document.getElementById("btn-edit-city").addEventListener("click", () => handleCity('edit'));
+        document.getElementById("btn-delete-city").addEventListener("click", () => handleCity('delete'));
+        document.getElementById("btn-clear").addEventListener("click", clearFields);
+
+        document.addEventListener("DOMContentLoaded", () => {
+            fetchCities();
+        });
+    </script>
+</body>
+</html>
